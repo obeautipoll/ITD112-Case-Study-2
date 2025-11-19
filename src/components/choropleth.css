@@ -1,0 +1,33 @@
+.map-container {
+  height: 600px;
+  width: 100%;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  position: relative;
+}
+
+.hover-info {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 5px;
+  font-size: 14px;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.map-legend {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  background: #fff;
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  box-shadow: 0 1px 5px rgba(0,0,0,0.2);
+  line-height: 18px;
+  z-index: 1000;
+}
