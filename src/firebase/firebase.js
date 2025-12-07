@@ -6,14 +6,13 @@ import { getStorage } from "firebase/storage";
 
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAVG8DP88dPPkSyJ_p4cN9iLuZoO_JF6MU",
-  authDomain: "itd112emigrants.firebaseapp.com",
-  projectId: "itd112emigrants",
-  storageBucket: "itd112emigrants.firebasestorage.app",
-  messagingSenderId: "765210496811",
-  appId: "1:765210496811:web:473accd94b43b2fa2e7f6e"
+  apiKey: "AIzaSyDj66dumvj4ydMHz5FFYhBj53EEMMCdXtY",
+  authDomain: "nisnisanfilipinoemigrantsdb.firebaseapp.com",
+  projectId: "nisnisanfilipinoemigrantsdb",
+  storageBucket: "nisnisanfilipinoemigrantsdb.firebasestorage.app",
+  messagingSenderId: "678501248354",
+  appId: "1:678501248354:web:817ebcab138b6ef502d03b"
 };
-
 
 
 const app = initializeApp(firebaseConfig);

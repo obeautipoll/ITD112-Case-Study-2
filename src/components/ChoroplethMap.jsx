@@ -8,6 +8,98 @@ import "leaflet/dist/leaflet.css";
 import regionGeo from "../data/region.geojson";
 import provincesGeo from "../data/provinces.geojson";
 import citiesGeo from "../data/cities.geojson";
+import regionsList from "../data/regions.json";
+
+const normalizeName = (str = "") =>
+  String(str || "")
+    .toLowerCase()
+    .replace(/\(.*?\)/g, "")
+    .replace(/\b(city of|province of)\b/g, "")
+    .replace(/\bcity\b/g, "")
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/^-+|-+$/g, "")
+    .trim();
+
+const regionAliasRules = [
+    { canonical: "Central Luzon", keywords: ["Region III", "Central Luzon"] },
+    { canonical: "Ilocos Region", keywords: ["Region I", "Ilocos Region"] },
+    { canonical: "CALABARZON", keywords: ["Region IV-A", "CALABARZON"] },
+    { canonical: "Cagayan Valley", keywords: ["Region II", "Cagayan Valley"] },
+    { canonical: "MIMAROPA", keywords: ["Region IV-B", "MIMAROPA"] },
+    { canonical: "Bicol Region", keywords: ["Region V", "Bicol Region"] },
+    { canonical: "Western Visayas", keywords: ["Region VI", "Western Visayas"] },
+    { canonical: "Central Visayas", keywords: ["Region VII", "Central Visayas"] },
+    { canonical: "Eastern Visayas", keywords: ["Region VIII", "Eastern Visayas"] },
+    { canonical: "Zamboanga Peninsula", keywords: ["Region IX", "Zamboanga Peninsula"] },
+    { canonical: "Northern Mindanao", keywords: ["Region X", "Northern Mindanao"] },
+    { canonical: "Davao Region", keywords: ["Region XI", "Davao Region"] },
+    { canonical: "SOCCSKSARGEN", keywords: ["Region XII", "SOCCSKSARGEN"] },
+    { canonical: "Caraga", keywords: ["Region XIII", "Caraga"] },
+    { canonical: "National Capital Region", keywords: ["NCR", "Metro Manila", "National Capital Region"] },
+    { canonical: "Cordillera Administrative Region", keywords: ["CAR", "Cordillera Administrative Region"] },
+    { canonical: "Autonomous Region in Muslim Mindanao", keywords: ["ARMM", "Bangsamoro", "BARMM", "Autonomous Region of Muslim Mindanao"] },
+  
+  {
+    canonical: "national capital region",
+    keywords: ["ncr", "metro manila", "metropolitan manila", "national capital region"],
+  },
+  {
+    canonical: "cordillera administrative region",
+    keywords: ["car", "cordillera administrative region"],
+  },
+  {
+    canonical: "autonomous region in muslim mindanao",
+    keywords: [
+      "autonomous region in muslim mindanao",
+      "autonomous region of muslim mindanao",
+      "bangsamoro",
+      "barmm",
+    ],
+  },
+];
+
+const canonicalizeRegionName = (str = "") => {
+  const normalized = normalizeName(str);
+  if (!normalized) return normalized;
+
+  const aliasMatch = regionAliasRules.find((rule) =>
+    rule.keywords.some((keyword) => normalized.includes(keyword))
+  );
+  if (aliasMatch) return aliasMatch.canonical;
+
+  const match = normalized.match(/region\s+([ivxlcdm]+|\d+)/);
+  if (match) return `region ${match[1]}`.trim();
+
+  return normalized;
+};
+
+// One-time sanity check: ensure region.geojson and regions.json align
+(() => {
+  const geoNames = new Set(
+    (regionGeo.features || []).map((feature) =>
+      canonicalizeRegionName(
+        feature.properties?.REGION ||
+          feature.properties?.NAME_1 ||
+          feature.properties?.region_name ||
+          ""
+      )
+    )
+  );
+  const jsonNames = new Set(
+    regionsList.map((region) => canonicalizeRegionName(region.region_name))
+  );
+
+  const missingInJson = Array.from(geoNames).filter((name) => !jsonNames.has(name));
+  const missingInGeo = Array.from(jsonNames).filter((name) => !geoNames.has(name));
+
+  if (missingInJson.length || missingInGeo.length) {
+    console.warn(
+      "[ChoroplethMap] Region data mismatch between region.geojson and regions.json",
+      { missingInJson, missingInGeo }
+    );
+  }
+})();
 
 const ChoroplethMap = ({
   data,
@@ -99,15 +191,21 @@ const ChoroplethMap = ({
   };
 
   const colorBreaks = [
-    { max: 0, color: "#FFEDA0", label: "0" },
-    { min: 1, max: 10, color: "#FED976", label: "1–10" },
-    { min: 11, max: 50, color: "#FEB24C", label: "11–50" },
-    { min: 51, max: 100, color: "#FD8D3C", label: "51–100" },
-    { min: 101, max: 200, color: "#FC4E2A", label: "101–200" },
-    { min: 201, max: 500, color: "#E31A1C", label: "201–500" },
-    { min: 501, max: 1000, color: "#BD0026", label: "501–1000" },
-    { min: 1001, color: "#800026", label: "1000+" },
-  ];
+  { max: 0, color: "#FFEDA0", label: "0" },
+  { min: 1, max: 10, color: "#FED976", label: "1–10" },
+  { min: 11, max: 50, color: "#FEB24C", label: "11–50" },
+  { min: 51, max: 100, color: "#FD8D3C", label: "51–100" },
+  { min: 101, max: 200, color: "#FC4E2A", label: "101–200" },
+  { min: 201, max: 300, color: "#E31A1C", label: "201–300" },
+  { min: 301, max: 400, color: "#BD0026", label: "301–400" },
+  { min: 401, max: 500, color: "#800026", label: "401–500" },
+  { min: 501, max: 600, color: "#7A0000", label: "501–600" },
+  { min: 601, max: 700, color: "#8B0000", label: "601–700" },
+  { min: 701, max: 800, color: "#9A0000", label: "701–800" },
+  { min: 801, max: 900, color: "#A80000", label: "801–900" },
+  { min: 901, max: 1000, color: "#B80000", label: "901–1000" },
+  { min: 1001, color: "#800026", label: "1000+" },
+];
 
   // Feature name based on level
   const getFeatureName = (feature) => {
@@ -118,35 +216,10 @@ const ChoroplethMap = ({
     return p.name || p.adm1_en || p.region_name;
   };
 
-  // Normalize and canonicalize names to improve matching between data and GeoJSON
-  const normalize = (str) =>
-    String(str || "")
-      .toLowerCase()
-      .replace(/\(.*?\)/g, "") // remove parentheticals
-      .replace(/\b(city of|province of)\b/g, "")
-      .replace(/\bcity\b/g, "")
-      .replace(/[^a-z0-9\s-]/g, "")
-      .replace(/\s+/g, " ")
-      .replace(/^-+|-+$/g, "")
-      .trim();
-
-  const canonicalize = (str) => {
-    const n = normalize(str);
-    if (!n) return n;
-    // Common Philippine region aliases
-    if (n === "ncr" || n === "metro manila") return "national capital region";
-    if (n === "car") return "cordillera administrative region";
-    if (n.includes("bangsamoro autonomous region") || n === "barmm")
-      return "autonomous region of muslim mindanao"; // matches older ARMM polygons
-    if (n === "iv a" || n === "region iv a" || n.includes("calabarzon")) return "region iv a";
-    if (n === "iv b" || n === "region iv b" || n.includes("mimaropa")) return "region iv b";
-    return n;
-  };
-
   // Extract the appropriate location name from a data item based on the current level
   const extractLocationName = (item) => {
     // Prefer explicit fields if present
-    if (level === "region" && item.region) return item.region;
+    if (level === "region" && (item.region || item.regionName)) return item.region || item.regionName;
     if (level === "province" && item.province) return item.province;
     if (level === "municipality" && (item.municipality || item.city)) return item.municipality || item.city;
 
@@ -177,7 +250,9 @@ const ChoroplethMap = ({
   const valueForFeature = (featureName) =>
     data.reduce((sum, item) => {
       const itemName = extractLocationName(item);
-      return canonicalize(itemName) === canonicalize(featureName)
+      return (
+        canonicalizeRegionName(itemName) === canonicalizeRegionName(featureName)
+      )
         ? sum + (Number(item[valueKey]) || 0)
         : sum;
     }, 0);

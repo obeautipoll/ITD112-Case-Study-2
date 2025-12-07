@@ -18,6 +18,9 @@ import {
   orderBy,
 } from "firebase/firestore";
 import Papa from "papaparse"; // for CSV parsing
+import regionsData from "../../data/regions.json";
+import provincesData from "../../data/provinces.json";
+import municipalitiesData from "../../data/municipalities.json";
 
 //main
 import AddRecord from "./crud/AddRecord";
@@ -30,6 +33,95 @@ import { fetchAgeRecords } from "../../services/ageService";
 import { processCSVUpload } from "../../services/csvUploadService";
 
 import "./table.css";
+
+const normalizeLabel = (value = "") =>
+  value
+    .toString()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const provinceByCode = new Map(
+  provincesData.map((province) => [province.province_code.padStart(4, "0"), province])
+);
+
+const regionNameByCode = new Map(
+  regionsData.map((region) => [region.region_code.padStart(2, "0"), region.region_name])
+);
+
+const municipalitiesByName = new Map(
+  municipalitiesData.map((municipality) => {
+    const province = provinceByCode.get(municipality.province_code);
+    const provinceName = province?.province_name || "Unknown Province";
+    const regionCode =
+      province?.region_code || municipality.region_desc || "";
+    const regionName =
+      regionNameByCode.get(regionCode.toString().padStart(2, "0")) || "Unknown Region";
+
+    return [
+      normalizeLabel(municipality.municipality_name),
+      {
+        municipalityName: municipality.municipality_name,
+        provinceName,
+        regionName,
+      },
+    ];
+  })
+);
+
+const parseCount = (value) => {
+  if (value === undefined || value === null) return null;
+  const cleaned = value.toString().replace(/,/g, "").trim();
+  if (cleaned === "" || cleaned === "-") return null;
+  const parsed = Number.parseInt(cleaned, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+};
+
+const normalizePlaceOfOriginRow = (csvRecord = {}) => {
+  const municipalityRaw =
+    csvRecord["CITY / MUNICIPALITY"] ||
+    csvRecord["City / Municipality"] ||
+    csvRecord["Municipality"] ||
+    "";
+  const municipalityName = municipalityRaw.split(",")[0].trim();
+  const normalizedName = normalizeLabel(municipalityName);
+  if (!normalizedName) {
+    return [];
+  }
+
+  const municipalityMeta = municipalitiesByName.get(normalizedName);
+  if (!municipalityMeta) {
+    console.warn(
+      `[PlaceOfOrigin CSV] Municipality "${municipalityName}" not found in reference data.`,
+      csvRecord
+    );
+    return [];
+  }
+
+  const yearKeys = Object.keys(csvRecord).filter((key) => /^\d{4}$/.test(key.trim()));
+  if (!yearKeys.length) {
+    return [];
+  }
+
+  return yearKeys
+    .map((yearKey) => {
+      const count = parseCount(csvRecord[yearKey]);
+      if (count === null) return null;
+
+      return {
+        region: municipalityMeta.regionName,
+        province: municipalityMeta.provinceName,
+        municipality: municipalityMeta.municipalityName,
+        year: Number.parseInt(yearKey.trim(), 10),
+        count,
+      };
+    })
+    .filter(Boolean);
+};
 
 
 const AdminEmigrants = () => {
@@ -127,8 +219,12 @@ const getCollectionName = (category) => {
   };
   return mapping[category] || category;
 };
-  const normalizeCSVData = (csvRecord, category) => {
+const normalizeCSVData = (csvRecord, category) => {
   console.log("normalizeCSVData category:", category); // Log the category to ensure it's correct
+
+  if (category === "placeOfOrigin") {
+    return normalizePlaceOfOriginRow(csvRecord);
+  }
 
   // If the category is 'age', handle the age group and year count data
    if (category === "age") {
@@ -218,31 +314,48 @@ const getCollectionName = (category) => {
 }
 
   else {
-    console.error("Unknown category:", category); // Log the error
-    throw new Error("Unknown category");
+    console.warn("Unknown category:", category, csvRecord);
+    return [];
   }
 };
 
   // ✅ CSV Upload logic
- const handleCSVUpload = (event) => {
+const cleanCSVData = (data) =>
+  data.filter((row) =>
+    row && Object.values(row).some((value) => value !== "" && value !== null)
+  );
+
+const handleCSVUpload = (event) => {
   const file = event.target.files[0];
   if (!file) return;
 
   Papa.parse(file, {
     complete: (result) => {
+      console.log("Parsed CSV result:", result);
       if (!result.data || result.data.length === 0) {
         alert("Empty CSV file");
         return;
       }
 
-      // Normalize the CSV data
-    const normalizedData = result.data.flatMap((record) =>
-      normalizeCSVData(record, filters.category) // Pass the category from filters
-    );
+      const cleanedData = cleanCSVData(result.data);
+      if (!Array.isArray(cleanedData)) {
+        console.error("CSV data is not in expected array format.");
+        return;
+      }
+
+      const normalizedData = cleanedData.flatMap((record) =>
+        normalizeCSVData(record, filters.category)
+      );
+
+      if (!normalizedData.length) {
+        alert("No valid rows found in CSV.");
+        return;
+      }
+
       setCsvData(normalizedData);
-      setFilteredRecords(normalizedData); // Update filtered records to the normalized data
+      setFilteredRecords(normalizedData);
       setIsCSVPreview(true);
-      setPopupMessage("✅ CSV loaded successfully!");
+      setPopupMessage("?o. CSV loaded successfully!");
       setTimeout(() => setPopupMessage(""), 2000);
     },
     header: true,

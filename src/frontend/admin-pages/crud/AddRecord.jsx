@@ -144,6 +144,18 @@ const AddRecord = ({ category, onClose }) => {
       return;
     }
 
+    if (category === "placeOfOrigin") {
+      if (!formData.region || !formData.province || !formData.municipality) {
+        alert("Please select a region, province, and municipality.");
+        return;
+      }
+      const parsedCount = Number(formData.count);
+      if (!Number.isFinite(parsedCount) || parsedCount <= 0) {
+        alert("Count must be greater than zero.");
+        return;
+      }
+    }
+
     // 🧩 Build record object depending on category
     let recordToAdd;
     if (category === "age") {
@@ -183,13 +195,13 @@ const AddRecord = ({ category, onClose }) => {
   };
 }
 else if (category === "placeOfOrigin") {
-  // Instead of manually inputting count, we just store 1 per submission
+  const parsedCount = Number(formData.count);
   recordToAdd = {
     year: Number(formData.year),
     region: formData.region || "Unknown",
     province: formData.province || "Unknown",
     municipality: formData.municipality || "Unknown",
-    count: Number(formData.count),  // every submission = 1 emigrant
+    count: Math.max(1, Number.isFinite(parsedCount) ? parsedCount : 1),
   };
 }
       else {

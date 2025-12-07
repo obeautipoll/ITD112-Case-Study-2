@@ -27,7 +27,7 @@ import {
 
 //services
 import { subscribeToAggregatedData } from "../../services/realtimeDataService";
-
+import { updateFirestoreRegionFieldBatch } from "../../utils/firebaseUtils"; 
 import ChoroplethMap from "../../components/ChoroplethMap";
 
 import * as d3 from "d3-scale-chromatic";
@@ -55,9 +55,31 @@ const AdminReports = () => {
     chartType: "bar",
     mapLevel: "region", // default map level to match available GeoJSON
     year: "all",
+    regionFilter: "all",
   });
 
 const [topN, setTopN] = useState(5);
+const [isUpdatingRegions, setIsUpdatingRegions] = useState(false);
+const [regionUpdateMessage, setRegionUpdateMessage] = useState("");
+
+const handleRegionFieldUpdate = async () => {
+  setIsUpdatingRegions(true);
+  setRegionUpdateMessage("Updating Firestore regions...");
+  try {
+    const result = await updateFirestoreRegionFieldBatch();
+    const updated = result?.updated || 0;
+    setRegionUpdateMessage(
+      updated > 0
+        ? `Updated ${updated} region ${updated === 1 ? "entry" : "entries"}.`
+        : "All region entries already follow the required format."
+    );
+  } catch (error) {
+    console.error("Failed to update region documents:", error);
+    setRegionUpdateMessage("Unable to update regions. Please check the console for details.");
+  } finally {
+    setIsUpdatingRegions(false);
+  }
+};
 
   // ✅ Standardized age groups
   const ageGroups = [
@@ -321,8 +343,9 @@ const getPlaceOfOriginData = () => {
 
   const datasets = origins.map((origin, index) => {
     const data = years.map(year => {
-      const rec = filteredRecords.find(r => (r[level] || r.placeoforigin) === origin && r.year === year);
-      return rec?.count || 0;
+      return filteredRecords
+        .filter(r => (r[level] || r.placeoforigin) === origin && r.year === year)
+        .reduce((sum, rec) => sum + (Number(rec.count) || 0), 0);
     });
     return {
       label: origin,
@@ -336,6 +359,7 @@ const getPlaceOfOriginData = () => {
 
   // 🧩 UI
   return (
+    
     <div className="monitor-emigrants-page">
       <SideBar />
       <AdminNavbar />
@@ -631,6 +655,15 @@ const getPlaceOfOriginData = () => {
   <>
     <h3>Place of Origin of Emigrants</h3>
 
+<div>
+  {/* Button for updating regions in Firestore */}
+  <button onClick={handleRegionFieldUpdate} disabled={isUpdatingRegions}>
+    {isUpdatingRegions ? "Updating Regions..." : "Update Regions in Firestore"}
+  </button>
+  {regionUpdateMessage && (
+    <p>{regionUpdateMessage}</p>
+  )}
+</div>
     {/* Map Level Selector for choropleth */}
     {filters.chartType === "map" && (
       <div className="filter-group">
@@ -644,6 +677,27 @@ const getPlaceOfOriginData = () => {
           <option value="region">Region</option>
           <option value="province">Province</option>
           <option value="municipality">Municipality</option>
+        </select>
+      </div>
+    )}
+
+    {filters.chartType === "map" && filters.mapLevel !== "region" && (
+      <div className="filter-group">
+        <label>Region Filter:</label>
+        <select
+          value={filters.regionFilter || "all"}
+          onChange={(e) =>
+            setFilters({ ...filters, regionFilter: e.target.value })
+          }
+        >
+          <option value="all">All</option>
+          {Array.from(new Set(records.map((r) => r.region).filter(Boolean)))
+            .sort()
+            .map((region) => (
+              <option key={region} value={region}>
+                {region}
+              </option>
+            ))}
         </select>
       </div>
     )}
@@ -673,9 +727,22 @@ const getPlaceOfOriginData = () => {
 
     {filters.chartType === "map" && (
       <ChoroplethMap
-        data={filteredRecords}           // your placeoforigin data
+        data={
+          filters.regionFilter === "all" || filters.mapLevel === "region"
+            ? filteredRecords
+            : filteredRecords.filter(
+                (record) =>
+                  record.region &&
+                  record.region.toLowerCase() ===
+                    filters.regionFilter.toLowerCase()
+              )
+        }           // your placeoforigin data
         valueKey="count"                 // field used for coloring
-        labelKey="placeoforigin"         // field used for tooltip
+        labelKey={
+          (filters.mapLevel === "region" && "region") ||
+          (filters.mapLevel === "municipality" && "municipality") ||
+          "province"
+        }
         level={filters.mapLevel || "province"} // pass selected map level
       />
     )}
