@@ -10,48 +10,59 @@ const createStats = (values) => {
   return { min, max, range };
 };
 
-export const normalizeSexSeries = (series, statsOverride) => {
-  const maleValues = series.map((item) => clampNumber(item.male));
-  const femaleValues = series.map((item) => clampNumber(item.female));
-
-  const maleStats = statsOverride?.male || createStats(maleValues);
-  const femaleStats = statsOverride?.female || createStats(femaleValues);
-
-  const normalized = series.map((item) => ({
-    year: item.year,
-    male: (clampNumber(item.male) - maleStats.min) / maleStats.range,
-    female: (clampNumber(item.female) - femaleStats.min) / femaleStats.range,
-  }));
-
-  return {
-    normalized,
-    stats: {
-      male: maleStats,
-      female: femaleStats,
-    },
-  };
+const createEmptyStats = (fields) => {
+  return fields.reduce((acc, field) => {
+    acc[field] = { min: 0, max: 1, range: 1 };
+    return acc;
+  }, {});
 };
 
-export const denormalizeSexValue = (value, stats) => {
-  return value * stats.range + stats.min;
+export const denormalizeValue = (value, stats) => value * stats.range + stats.min;
+
+const normalizeSeries = (series, fields, statsOverride) => {
+  const stats = {};
+  fields.forEach((field) => {
+    if (statsOverride?.[field]) {
+      stats[field] = statsOverride[field];
+      return;
+    }
+    const values = series.map((item) => clampNumber(item[field]));
+    stats[field] = createStats(values);
+  });
+
+  const normalized = series.map((item) => {
+    const normalizedEntry = { year: item.year };
+    fields.forEach((field) => {
+      normalizedEntry[field] =
+        (clampNumber(item[field]) - stats[field].min) / stats[field].range;
+    });
+    return normalizedEntry;
+  });
+
+  return { normalized, stats };
 };
 
-export const createSexSequences = (normalizedRecords, lookback) => {
+const createSequences = (normalizedRecords, fields, lookback) => {
   const xs = [];
   const ys = [];
 
   for (let index = lookback; index < normalizedRecords.length; index += 1) {
     const window = normalizedRecords
       .slice(index - lookback, index)
-      .map((entry) => [entry.male, entry.female]);
+      .map((entry) => fields.map((field) => entry[field]));
     xs.push(window);
-    ys.push([normalizedRecords[index].male, normalizedRecords[index].female]);
+    ys.push(fields.map((field) => normalizedRecords[index][field]));
   }
 
   return { xs, ys };
 };
 
-export const prepareSexDataset = (series, lookback, statsOverride) => {
+export const prepareCategoryDataset = (
+  series,
+  fields,
+  lookback,
+  statsOverride
+) => {
   const sorted = [...series]
     .filter((item) => item.year !== undefined)
     .sort((a, b) => Number(a.year) - Number(b.year));
@@ -61,18 +72,16 @@ export const prepareSexDataset = (series, lookback, statsOverride) => {
       xs: [],
       ys: [],
       normalizedRecords: [],
-      stats: {
-        male: { min: 0, max: 1, range: 1 },
-        female: { min: 0, max: 1, range: 1 },
-      },
+      stats: createEmptyStats(fields),
       years: [],
       rawRecords: [],
       lookback,
+      fields,
     };
   }
 
-  const { normalized, stats } = normalizeSexSeries(sorted, statsOverride);
-  const { xs, ys } = createSexSequences(normalized, lookback);
+  const { normalized, stats } = normalizeSeries(sorted, fields, statsOverride);
+  const { xs, ys } = createSequences(normalized, fields, lookback);
 
   return {
     xs,
@@ -80,11 +89,17 @@ export const prepareSexDataset = (series, lookback, statsOverride) => {
     normalizedRecords: normalized,
     stats,
     years: sorted.map((item) => item.year),
-    rawRecords: sorted.map((item) => ({
-      year: item.year,
-      male: clampNumber(item.male),
-      female: clampNumber(item.female),
-    })),
+    rawRecords: sorted.map((item) => {
+      const record = { year: item.year };
+      fields.forEach((field) => {
+        record[field] = clampNumber(item[field]);
+      });
+      return record;
+    }),
     lookback,
+    fields,
   };
 };
+
+export const prepareSexDataset = (series, lookback, statsOverride) =>
+  prepareCategoryDataset(series, ["male", "female"], lookback, statsOverride);

@@ -28,6 +28,7 @@ import UserManagementView from "./frontend/admin-pages/admin-userManage";
 import AdminMonitorComplaints from "./frontend/admin-pages/admin-monitoring";
 import Analytics from "./frontend/admin-pages/admin-analytics";
 import Settings from "./frontend/admin-pages/admin-setting";
+import Forecasting from "./frontend/admin-pages/admin-forecasting";
 
 // PrivateRoute component to handle role-based route protection
 const PrivateRoute = ({ element, requiredRole }) => {
@@ -130,6 +131,15 @@ function App() {
     element: (
       <PrivateRoute
         element={<Settings />}
+        requiredRole="admin" // Protect the route, only accessible by admins
+      />
+    ),
+  },
+  {
+    path: "/aforecasting",
+    element: (
+      <PrivateRoute
+        element={<Forecasting />}
         requiredRole="admin" // Protect the route, only accessible by admins
       />
     ),

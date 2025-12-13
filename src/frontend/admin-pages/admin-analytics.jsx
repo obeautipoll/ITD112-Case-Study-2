@@ -61,6 +61,7 @@ const AdminReports = () => {
 const [topN, setTopN] = useState(5);
 const [isUpdatingRegions, setIsUpdatingRegions] = useState(false);
 const [regionUpdateMessage, setRegionUpdateMessage] = useState("");
+const [autoRegionUpdateTriggered, setAutoRegionUpdateTriggered] = useState(false);
 
 const handleRegionFieldUpdate = async () => {
   setIsUpdatingRegions(true);
@@ -71,7 +72,7 @@ const handleRegionFieldUpdate = async () => {
     setRegionUpdateMessage(
       updated > 0
         ? `Updated ${updated} region ${updated === 1 ? "entry" : "entries"}.`
-        : "All region entries already follow the required format."
+        : ""
     );
   } catch (error) {
     console.error("Failed to update region documents:", error);
@@ -80,6 +81,13 @@ const handleRegionFieldUpdate = async () => {
     setIsUpdatingRegions(false);
   }
 };
+
+useEffect(() => {
+  if (autoRegionUpdateTriggered) return;
+  setAutoRegionUpdateTriggered(true);
+  handleRegionFieldUpdate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [autoRegionUpdateTriggered]);
 
   // ✅ Standardized age groups
   const ageGroups = [
@@ -655,15 +663,9 @@ const getPlaceOfOriginData = () => {
   <>
     <h3>Place of Origin of Emigrants</h3>
 
-<div>
-  {/* Button for updating regions in Firestore */}
-  <button onClick={handleRegionFieldUpdate} disabled={isUpdatingRegions}>
-    {isUpdatingRegions ? "Updating Regions..." : "Update Regions in Firestore"}
-  </button>
-  {regionUpdateMessage && (
-    <p>{regionUpdateMessage}</p>
-  )}
-</div>
+{regionUpdateMessage && (
+  <p>{regionUpdateMessage}</p>
+)}
     {/* Map Level Selector for choropleth */}
     {filters.chartType === "map" && (
       <div className="filter-group">

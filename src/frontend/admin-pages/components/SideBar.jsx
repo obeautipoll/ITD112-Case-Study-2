@@ -42,6 +42,9 @@ const SideBar = () => {
       case "analytics":
         navigate("/aanalytics");
         break;
+      case "forecasting":
+        navigate("/aforecasting");
+        break;
       
       case "settings":
         navigate("/asettings");
@@ -86,6 +89,13 @@ const SideBar = () => {
             onClick={() => handleNavigation("analytics")}
           >
             <i className="fa-solid fa-chart-bar"></i> Reports & Analytics
+          </li>
+
+          <li 
+            className={window.location.pathname === "/aforecasting" ? "active" : ""}
+            onClick={() => handleNavigation("forecasting")}
+          >
+            <i className="fa-solid fa-chart-line"></i> Forecasting
           </li>
 
           

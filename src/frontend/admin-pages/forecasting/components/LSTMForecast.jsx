@@ -1,11 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Line } from "react-chartjs-2";
-import ForecastPanel from "./ForecastPanel";
+import "../../../../styles-admin/forecast.css";
+
 import {
   generateForecastFromModel,
   loadSavedMetadata,
   loadSavedModel,
+  isModelLoaded,
 } from "../models/lstmModel";
+import {
+  FORECAST_CATEGORIES,
+  DEFAULT_CATEGORY,
+  getCategoryFields,
+} from "../utils/categoryConfig";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -27,27 +34,70 @@ ChartJS.register(
   Legend
 );
 
-const formatNumber = (value) =>
-  typeof value === "number"
-    ? value.toLocaleString("en-US", { maximumFractionDigits: 2 })
-    : value;
-
-const LSTMForecast = () => {
+const LSTMForecast = ({ category: categoryProp, onCategoryChange }) => {
+  const initialCategory = categoryProp || DEFAULT_CATEGORY;
+  const [localCategory, setLocalCategory] = useState(initialCategory);
+  const category = categoryProp ?? localCategory;
   const [metadata, setMetadata] = useState(null);
-  const [modelToken, setModelToken] = useState(0);
   const [forecastResult, setForecastResult] = useState(null);
-  const [futureYears, setFutureYears] = useState(5);
+  const [tableField, setTableField] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const [processingMessage, setProcessingMessage] = useState("");
   const modelRef = useRef(null);
+  const cancelForecastRef = useRef(false);
+
+  const activeFields = metadata?.fields || getCategoryFields(category).map((field) => field.key);
+  const fieldLabels = metadata?.fieldLabels || activeFields.reduce((acc, key) => {
+    const configField = getCategoryFields(category).find((field) => field.key === key);
+    acc[key] = configField ? configField.label : key;
+    return acc;
+  }, {});
+
+  useEffect(() => {
+    if (categoryProp && categoryProp !== localCategory) {
+      setLocalCategory(categoryProp);
+    }
+  }, [categoryProp, localCategory]);
+
+  const propagateCategoryChange = (nextCategory) => {
+    if (onCategoryChange) {
+      onCategoryChange(nextCategory);
+    } else {
+      setLocalCategory(nextCategory);
+    }
+  };
+
+  useEffect(() => {
+    setTableField("all");
+  }, [category, metadata]);
 
   useEffect(() => {
     const loadArtifacts = async () => {
-      const meta = loadSavedMetadata();
+      const hasLoadedFlag = isModelLoaded(category);
+      if (!hasLoadedFlag) {
+        setMetadata(null);
+        setForecastResult(null);
+        setLoading(false);
+        setError(
+          `No ${FORECAST_CATEGORIES[category].label} model is loaded. Train or load a model in the training lab, then click "Load Model".`
+        );
+        if (modelRef.current) {
+          modelRef.current.dispose();
+          modelRef.current = null;
+        }
+        return;
+      }
+
+      const meta = loadSavedMetadata(category);
       setMetadata(meta);
       if (!meta) {
         setForecastResult(null);
         setLoading(false);
+        setError(
+          `Saved ${FORECAST_CATEGORIES[category].label} model metadata is missing. Please retrain and load the model.`
+        );
         if (modelRef.current) {
           modelRef.current.dispose();
           modelRef.current = null;
@@ -56,21 +106,23 @@ const LSTMForecast = () => {
       }
 
       setLoading(true);
+      setProcessingMessage("Loading saved model...");
       try {
-        const newModel = await loadSavedModel();
+        const newModel = await loadSavedModel(category);
         if (modelRef.current) {
           modelRef.current.dispose();
         }
         modelRef.current = newModel;
-        setModelToken(Date.now());
         setError("");
       } catch (err) {
         console.error(err);
         setError(
-          "Unable to load the pre-trained LSTM model. Please retrain in the trainer section."
+          "Unable to load the pre-trained LSTM model. Please retrain in the training lab."
         );
+        setForecastResult(null);
       } finally {
         setLoading(false);
+        setProcessingMessage("");
       }
     };
 
@@ -85,51 +137,78 @@ const LSTMForecast = () => {
         modelRef.current = null;
       }
     };
-  }, []);
+  }, [category]);
 
   useEffect(() => {
     if (!metadata || !modelRef.current) {
       setForecastResult(null);
+      setProcessing(false);
+      setProcessingMessage("");
+      if (!metadata) {
+        setError(
+          `No ${FORECAST_CATEGORIES[category].label} model found. Train and load a model first.`
+        );
+      }
       return;
     }
 
-    let cancelled = false;
+    if (
+      !Array.isArray(metadata.rawRecords) ||
+      metadata.rawRecords.length <= (metadata.lookback || 0)
+    ) {
+      setForecastResult(null);
+      setProcessing(false);
+      setProcessingMessage("");
+      setError(
+        "Saved LSTM model metadata is incomplete. Please retrain to refresh the stored artifacts."
+      );
+      return;
+    }
+
+    cancelForecastRef.current = false;
+    setProcessing(true);
+    setProcessingMessage("Generating forecast...");
     const runForecast = async () => {
       try {
         const result = await generateForecastFromModel({
-          model: modelRef.current,
+          category,
           metadata,
-          futurePeriods: futureYears,
+          futurePeriods: 10,
+          model: modelRef.current,
         });
-        if (!cancelled) {
+        if (!cancelForecastRef.current) {
           setForecastResult(result);
           setError("");
         }
       } catch (forecastError) {
         console.error(forecastError);
-        if (!cancelled) {
+        if (!cancelForecastRef.current) {
+          setForecastResult(null);
           setError(
             "Unable to generate forecast from the saved model. Please retrain."
           );
+          setProcessingMessage("Forecast failed.");
+        }
+      } finally {
+        if (!cancelForecastRef.current) {
+          setProcessing(false);
+          setProcessingMessage("");
         }
       }
     };
 
     runForecast();
     return () => {
-      cancelled = true;
+      cancelForecastRef.current = true;
     };
-  }, [metadata, futureYears, modelToken]);
+  }, [metadata, category]);
 
   const chartData = useMemo(() => {
     if (!forecastResult) return null;
-    const historicalYears = forecastResult.chartSeries.map(
-      (entry) => entry.year
-    );
-    const futureYearsList = forecastResult.futureForecast.map(
-      (entry) => entry.year
-    );
-    const labels = [...historicalYears, ...futureYearsList];
+
+    const fields = forecastResult.fields || [];
+    if (!fields.length) return null;
+
     const actualMap = new Map(
       forecastResult.chartSeries.map((entry) => [entry.year, entry.actual])
     );
@@ -137,122 +216,127 @@ const LSTMForecast = () => {
       forecastResult.chartSeries.map((entry) => [entry.year, entry.predicted])
     );
     const futureMap = new Map(
-      forecastResult.futureForecast.map((entry) => [entry.year, entry.predicted])
+      forecastResult.futureForecast.map((entry) => [entry.year, entry.values])
     );
-    const lastHistoricalYear =
-      forecastResult.chartSeries[forecastResult.chartSeries.length - 1]?.year;
+
+    const historicalYears = forecastResult.chartSeries.map((entry) => entry.year);
+    const futureYearsList = forecastResult.futureForecast.map((entry) => entry.year);
+    const labels = [...historicalYears, ...futureYearsList];
+    const lastHistoricalYear = historicalYears[historicalYears.length - 1];
+
+    const datasets = [];
+    fields.forEach((field, index) => {
+      const fieldConfig = getCategoryFields(category).find(
+        (item) => item.key === field
+      );
+      const color = fieldConfig?.color || `hsl(${(index * 90) % 360} 70% 50%)`;
+      const predictedColor =
+        fieldConfig?.predictedColor || `hsl(${(index * 90) % 360} 70% 70%)`;
+
+      datasets.push({
+        label: `${fieldLabels[field] || field} Actual`,
+        data: labels.map((year) => actualMap.get(year)?.[field] ?? null),
+        borderColor: color,
+        backgroundColor: `${color}33`,
+        tension: 0.25,
+        pointRadius: 3,
+      });
+
+      datasets.push({
+        label: `${fieldLabels[field] || field} Predicted`,
+        data: labels.map((year) =>
+          year > lastHistoricalYear
+            ? futureMap.get(year)?.[field] ?? null
+            : null
+        ),
+        borderColor: predictedColor,
+        backgroundColor: `${predictedColor}40`,
+        borderDash: [5, 5],
+        tension: 0.25,
+        pointRadius: labels.map((year) =>
+          year > lastHistoricalYear ? 3 : 0
+        ),
+        pointHoverRadius: labels.map((year) =>
+          year > lastHistoricalYear ? 4 : 0
+        ),
+      });
+    });
 
     return {
       labels,
-      datasets: [
-        {
-          label: "Actual Emigrants",
-          data: labels.map((year) => actualMap.get(year) ?? null),
-          borderColor: "#111827",
-          backgroundColor: "rgba(17, 24, 39, 0.15)",
-          borderWidth: 2,
-          tension: 0.3,
-          pointRadius: 3,
-        },
-        {
-          label: "Model Fit",
-          data: labels.map((year) => predictedMap.get(year) ?? null),
-          borderColor: "#10b981",
-          backgroundColor: "rgba(16, 185, 129, 0.15)",
-          tension: 0.3,
-          pointRadius: 3,
-          borderDash: [5, 5],
-        },
-        {
-          label: "Forecast",
-          data: labels.map((year) =>
-            year > lastHistoricalYear ? futureMap.get(year) ?? null : null
-          ),
-          borderColor: "#3b82f6",
-          backgroundColor: "rgba(59, 130, 246, 0.15)",
-          tension: 0.3,
-          pointRadius: 4,
-          borderDash: [2, 2],
-        },
-      ],
+      datasets,
     };
-  }, [forecastResult]);
+  }, [forecastResult, category, fieldLabels]);
 
-  const forecastMetrics = [
-    { label: "MAE", value: metadata ? formatNumber(metadata.mae) : "--" },
-    {
-      label: "Accuracy",
-      value: metadata ? `${metadata.accuracy.toFixed(2)}%` : "--",
-    },
-    {
-      label: "Best Config",
-      value: metadata?.bestConfig
-        ? `L${metadata.bestConfig.lookback} | ${metadata.bestConfig.units.join(
-            "-"
-          )}`
-        : "--",
-    },
-    {
-      label: "Forecast Horizon",
-      value: `${futureYears} year(s)`,
-    },
+  const handleCancelForecast = () => {
+    if (!processing) return;
+    cancelForecastRef.current = true;
+    setProcessing(false);
+    setProcessingMessage("Forecast cancelled.");
+  };
+
+  const tableFieldOptions = [
+    { value: "all", label: "All Fields" },
+    ...activeFields.map((key) => ({
+      value: key,
+      label: fieldLabels[key] || key,
+    })),
   ];
 
-  const handleFutureYearsChange = (event) => {
-    const parsed = Number(event.target.value);
-    if (Number.isNaN(parsed)) return;
-    const constrained = Math.max(1, Math.min(10, parsed));
-    setFutureYears(constrained);
-  };
+  const filteredFields =
+    tableField === "all" ? activeFields : [tableField].filter((key) => activeFields.includes(key));
 
   const nextForecast =
     forecastResult && forecastResult.futureForecast.length
       ? forecastResult.futureForecast[0]
       : null;
 
+  const showCategorySelector = !categoryProp;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-      <ForecastPanel title="Forecast Snapshot" metrics={forecastMetrics} />
+    <div className="forecast-stack">
+      {showCategorySelector && (
+        <div className="forecast-panel forecast-panel--column">
+          <h4>Forecast Category</h4>
+          <label className="forecast-select">
+            <span>Select Category</span>
+            <select
+              value={category}
+              onChange={(event) => propagateCategoryChange(event.target.value)}
+            >
+              {Object.entries(FORECAST_CATEGORIES).map(([key, config]) => (
+                <option key={key} value={key}>
+                  {config.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
 
       <div className="forecast-panel">
-        <h4>Forecast Controls</h4>
-        <p style={{ marginBottom: "12px", color: "#4b5563" }}>
-          Forecasting runs exclusively on the latest pre-trained LSTM model.
-          Adjust the projection horizon (up to 10 years) and the system will
-          reuse the stored weights—no retraining required.
-        </p>
-        <label
-          style={{
-            textAlign: "left",
-            display: "flex",
-            flexDirection: "column",
-            gap: "6px",
-            maxWidth: "220px",
-          }}
-        >
-          <span>Forecast Years</span>
-          <input
-            type="number"
-            min="1"
-            max="10"
-            value={futureYears}
-            onChange={handleFutureYearsChange}
-          />
-        </label>
+        <h4>{FORECAST_CATEGORIES[category].label} Forecast</h4>
         {metadata?.trainedAt && (
-          <p style={{ marginTop: "12px", color: "#6b7280" }}>
+          <p className="forecast-description">
             Model trained on: {new Date(metadata.trainedAt).toLocaleString()}
           </p>
         )}
-      </div>
-
-      <div className="forecast-panel">
-        <h4>LSTM Fit vs Forecast</h4>
+        {processing && (
+          <button
+            className="forecast-button forecast-button--secondary"
+            onClick={handleCancelForecast}
+          >
+            Cancel Forecast
+          </button>
+        )}
+        {processingMessage && (
+          <p className="forecast-status">{processingMessage}</p>
+        )}
         {loading && <p>Loading saved model...</p>}
         {!loading && !metadata && (
           <p>
-            No saved model found. Please train a model in the Hyperparameter
-            Training section before forecasting.
+            No saved model found for {FORECAST_CATEGORIES[category].label}. Please train
+            and load a model in the Hyperparameter Training Lab.
           </p>
         )}
         {!loading && metadata && chartData && (
@@ -260,58 +344,73 @@ const LSTMForecast = () => {
             data={chartData}
             options={{
               responsive: true,
-              interaction: { mode: "index", intersect: false },
+              interaction: { mode: "nearest", intersect: false },
               plugins: {
                 legend: { position: "top" },
                 title: { display: false },
               },
-              scales: { y: { beginAtZero: true } },
+              scales: {
+                x: {
+                  ticks: {
+                    autoSkip: false,
+                    maxRotation: 45,
+                    minRotation: 45,
+                  },
+                },
+                y: { beginAtZero: true },
+              },
             }}
           />
         )}
-        {error && (
-          <p style={{ marginTop: "12px", color: "#ef4444" }}>{error}</p>
-        )}
+        {error && <p className="forecast-error">{error}</p>}
       </div>
 
       {forecastResult && (
-        <div className="forecast-panel">
-          <h4>Forecast Projection ({futureYears} Year(s))</h4>
-          <div style={{ overflowX: "auto" }}>
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                minWidth: "420px",
-              }}
-            >
-              <thead>
-                <tr
-                  style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}
-                >
-                  <th style={{ padding: "10px" }}>Year</th>
-                  <th style={{ padding: "10px" }}>Predicted Emigrants</th>
-                </tr>
-              </thead>
-              <tbody>
-                {forecastResult.futureForecast.map((entry) => (
-                  <tr key={entry.year} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                    <td style={{ padding: "10px" }}>{entry.year}</td>
-                    <td style={{ padding: "10px" }}>
-                      {formatNumber(Math.round(entry.predicted))}
-                    </td>
+        <>
+          <div className="forecast-panel">
+            <h4>Future Forecast (10 year(s))</h4>
+            <div className="forecast-table-wrapper">
+              <table className="forecast-table forecast-table--wide">
+                <thead>
+                  <tr>
+                    <th>Year</th>
+                    {activeFields.map((field) => (
+                      <th key={`future-header-${field}`}>
+                        {fieldLabels[field]} (Predicted)
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {forecastResult.futureForecast.map((row) => (
+                    <tr key={row.year}>
+                      <td>{row.year}</td>
+                      {activeFields.map((field) => (
+                        <td key={`${row.year}-${field}`}>
+                          {Math.round(row.values[field]).toLocaleString()}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {nextForecast && (
+              <p className="forecast-status">
+                Next year projection ({nextForecast.year}):{" "}
+                {activeFields
+                  .map(
+                    (field) =>
+                      `${fieldLabels[field]} ≈ ${Math.round(
+                        nextForecast.values[field]
+                      ).toLocaleString()}`
+                  )
+                  .join(", ")}
+                .
+              </p>
+            )}
           </div>
-          {nextForecast && (
-            <p style={{ marginTop: "12px", color: "#2563eb" }}>
-              Next year projection: {nextForecast.year} ≈{" "}
-              {formatNumber(Math.round(nextForecast.predicted))} emigrants
-            </p>
-          )}
-        </div>
+        </>
       )}
     </div>
   );
